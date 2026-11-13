@@ -1,0 +1,83 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedInAs(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    function hasTeacherClaim() {
+      return request.auth.token.get('role', '') == 'teacher';
+    }
+
+    function validProfile(userId) {
+      let data = request.resource.data;
+      return data.keys().hasAll([
+          'uid',
+          'email',
+          'displayName',
+          'photoURL',
+          'role',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'email',
+          'displayName',
+          'photoURL',
+          'role',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.uid == userId
+        && data.email == request.auth.token.email
+        && data.email is string
+        && data.email.size() <= 320
+        && data.displayName is string
+        && data.displayName.size() <= 100
+        && data.photoURL is string
+        && data.photoURL.size() <= 2048
+        && data.role in ['student', 'teacher']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow read: if signedInAs(userId);
+
+      allow create: if signedInAs(userId)
+        && validProfile(userId)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && (
+          request.resource.data.role == 'student'
+          || (request.resource.data.role == 'teacher' && hasTeacherClaim())
+        );
+
+      allow update: if signedInAs(userId)
+        && validProfile(userId)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'email',
+          'displayName',
+          'photoURL',
+          'role',
+          'updatedAt'
+        ])
+        && (
+          request.resource.data.role == resource.data.role
+          || (request.resource.data.role == 'teacher' && hasTeacherClaim())
+          || (request.resource.data.role == 'student' && !hasTeacherClaim())
+        );
+
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
